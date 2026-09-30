@@ -153,3 +153,14 @@ def orchestrate_query(user_query: str):
         )
     else:
         print("\n[Router]: Request does not match active agent domains.")
+# ==========================================
+# 5. TEST RUNS
+# ==========================================
+
+if __name__ == "__main__":
+    # Test 1: Routes to System Health Agent
+    orchestrate_query("Can you check if my CPU or RAM are overloading right now?")
+    
+    # Test 2: Routes to Network Diagnostics Agent
+    orchestrate_query("Ping 8.8.8.8 to see if our network connection to DNS is stable.")
+
