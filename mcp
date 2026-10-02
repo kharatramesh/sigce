@@ -1,0 +1,99 @@
+from mcp.server.fastmcp import FastMCP
+from duckduckgo_search import DDGS
+
+# Initialize FastMCP Server
+mcp = FastMCP("LocalWebSearch")
+
+@mcp.tool()
+def search_web(query: str) -> str:
+    """Search the web for up-to-date information and facts.
+    
+    Args:
+        query: Search keywords.
+    """
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=2))
+            if not results:
+                return "No results found."
+            return "\n".join([f"- {r['title']}: {r['body']}" for r in results])
+    except Exception as e:
+        return f"Search error: {str(e)}"
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
+
+
+
+Step 2: Create the Local LLM MCP Client (client_search.py)
+
+import asyncio
+import ollama
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def run_local_mcp():
+    # 1. Define server startup options
+    server_params = StdioServerParameters(
+        command="python",
+        args=["search_server.py"]
+    )
+
+    # 2. Connect to the MCP Server over stdio
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # 3. Discover available tools from the MCP Server
+            mcp_tools = await session.list_tools()
+            
+            # Format MCP tools into Ollama's expected function signature
+            ollama_tools = []
+            for tool in mcp_tools.tools:
+                ollama_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.inputSchema
+                    }
+                })
+
+            user_query = "What is the latest score or news about Real Madrid?"
+            print(f"User Query: {user_query}\n")
+
+            # 4. Ask local LLM via Ollama
+            response = ollama.chat(
+                model="llama3.2",
+                messages=[{"role": "user", "content": user_query}],
+                tools=ollama_tools
+            )
+
+            # 5. Handle Tool Call if requested by the LLM
+            message = response["message"]
+            if message.get("tool_calls"):
+                for tool_call in message["tool_calls"]:
+                    fn_name = tool_call["function"]["name"]
+                    fn_args = tool_call["function"]["arguments"]
+                    print(f"--> [Local LLM called MCP Tool]: {fn_name}({fn_args})")
+
+                    # Execute tool call on MCP Server
+                    result = await session.call_tool(fn_name, fn_args)
+                    tool_output = result.content[0].text
+                    print(f"--> [MCP Server Output]:\n{tool_output}\n")
+
+                    # 6. Send result back to LLM for final answer synthesis
+                    final_response = ollama.chat(
+                        model="llama3.2",
+                        messages=[
+                            {"role": "user", "content": user_query},
+                            message,
+                            {"role": "tool", "content": tool_output}
+                        ]
+                    )
+                    print(f"Final Answer:\n{final_response['message']['content']}")
+            else:
+                print(f"Direct Response:\n{message['content']}")
+
+if __name__ == "__main__":
+    asyncio.run(run_local_mcp())
